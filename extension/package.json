@@ -1,0 +1,35 @@
+{
+  "name": "psf-toolkit-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "npm run build:popup && npm run build:content && npm run build:background && npm run build:fix-paths",
+    "build:popup": "vite build --config vite.popup.config.ts",
+    "build:content": "vite build --config vite.content.config.ts",
+    "build:background": "vite build --config vite.background.config.ts",
+    "build:fix-paths": "node fix-paths.mjs",
+    "dev": "npm run build && npm run watch",
+    "watch": "concurrently \"npm run build:popup -- --watch\" \"npm run build:content -- --watch\" \"npm run build:background -- --watch\""
+  },
+  "dependencies": {
+    "@mui/material": "^5.15.0",
+    "@emotion/react": "^11.11.1",
+    "@emotion/styled": "^11.11.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "psf-toolkit-core": "file:../core"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.251",
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@vitejs/plugin-react": "^4.2.0",
+    "concurrently": "^8.2.2",
+    "typescript": "^5.6.3",
+    "vite": "^5.0.0",
+    "vite-plugin-static-copy": "^1.0.0"
+  }
+}
+

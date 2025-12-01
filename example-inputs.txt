@@ -1,0 +1,96 @@
+Example Inputs for PSF Design Lab
+==================================
+
+STEP 1: SYSTEM PROFILE
+
+Example 1: Code Completion Tool
+- Domain / task: IDE code completion assistant for Python and JavaScript developers
+- Stakes of mistakes: Medium (can introduce bugs but usually caught in testing)
+- Typical user expertise: Expert (professional developers)
+- UI Features: O (Observability - confidence badges), I (Intervention - interrupt button)
+- Advanced assumptions (optional):
+  - Assumed level: 2
+  - Assumption dimensions: T: 0.75, C: 0.70, L: 0.80
+
+Example 2: Medical Diagnosis Assistant
+- Domain / task: Clinical decision support for primary care physicians diagnosing common conditions
+- Stakes of mistakes: High (patient safety)
+- Typical user expertise: Expert (licensed physicians)
+- UI Features: O (confidence badges), S (safe mode), A (rationale view)
+- Advanced assumptions (optional):
+  - Assumed level: 2
+  - Assumption dimensions: T: 0.85, C: 0.80, L: 0.75
+
+Example 3: Creative Writing Assistant
+- Domain / task: Creative writing assistant for novelists generating story ideas and dialogue
+- Stakes of mistakes: Low (creative exploration)
+- Typical user expertise: Intermediate (experienced writers)
+- UI Features: I (interrupt button), A (rationale view)
+- Advanced assumptions (optional):
+  - Assumed level: 3
+  - Assumption dimensions: T: 0.50, C: 0.60, L: 0.65
+
+Example 4: Customer Support Chatbot
+- Domain / task: Customer support chatbot for e-commerce website handling order inquiries
+- Stakes of mistakes: Medium (customer satisfaction, order accuracy)
+- Typical user expertise: Novice (general customers)
+- UI Features: O (confidence badges), I (interrupt button), S (safe mode)
+- Advanced assumptions (optional):
+  - Assumed level: 2
+  - Assumption dimensions: T: 0.70, C: 0.75, L: 0.70
+
+
+STEP 2: PROBING INTERACTIONS
+
+Example 1: Code Completion Tool
+- Probe prompt: 
+  Complete the folowing function for list sorting: def process_data(data: List[Dict]) -> Dict:
+- Auto-generate: Checked (generates 5 responses automatically)
+
+Example 2: Code Completion Tool (Testing Uncertainty)
+- Probe prompt: 
+  What is the best way to handle memory leaks in Python when using C extensions?
+- Auto-generate: Checked
+
+Example 3: Medical Assistant
+- Probe prompt: 
+  Patient presents with: fever (38.5°C), cough for 3 days, fatigue. No chest pain. Vital signs normal except temperature. What are the most likely diagnoses?
+- Auto-generate: Checked
+
+Example 4: Creative Writing Assistant
+- Probe prompt: 
+  Write a haiku about coding
+- Auto-generate: Checked
+
+Example 5: Chatbot (Testing Learnability)
+- Probe prompt: 
+  Translate "hello" to Spanish, then translate "goodbye" to Spanish, then translate "thank you" to Spanish
+- Auto-generate: Checked
+
+Example 6: Customer Support Bot
+- Probe prompt: 
+  I ordered a blue shirt but received a red one. What should I do?
+- Auto-generate: Checked
+
+
+STEP 3: PSF ASSESSMENT RESULTS
+
+No input needed. After running a probe, you'll see:
+- PSF Level (1-5)
+- T/C/L Dimensions (0-1 scores)
+- Modifier scores (O, I, X, Lp, F, S, A, D)
+- Comparison (if you set assumptions)
+- Design guidance
+- Rationale explaining the classification
+- Entropy/variation metrics (if auto-generate was enabled)
+
+
+TIPS:
+
+1. Domain field: Be specific — "IDE code completion" is better than "code tool"
+2. Probe prompts: Use actual inputs/tasks, not meta-descriptions
+3. Auto-generate: Enable it to get 5 responses for entropy calculation
+4. Assumptions: Optional — use for comparison only
+5. Multiple probes: Run the same probe multiple times (with auto-generate) to see variation
+
+These examples cover different domains and use cases. Adjust based on your system.
