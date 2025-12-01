@@ -23,6 +23,9 @@ build/
 .DS_Store
 Thumbs.db
 
+# Documentation
+*.md
+
 # Extension build artifacts (keep source, ignore built files)
 extension/dist/
 extension/node_modules/

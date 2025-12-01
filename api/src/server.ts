@@ -49,6 +49,194 @@ function clamp01(x: number): number {
   return Math.max(0, Math.min(1, x));
 }
 
+/**
+ * Compute empirical P_t distribution from response samples.
+ * Returns a Map from output string to probability.
+ */
+function computeEmpiricalDistribution(samples: string[]): Map<string, number> {
+  const n = samples.length;
+  const counts = new Map<string, number>();
+  for (const s of samples) {
+    const trimmed = s.trim();
+    if (trimmed) {
+      counts.set(trimmed, (counts.get(trimmed) ?? 0) + 1);
+    }
+  }
+  const P_t = new Map<string, number>();
+  counts.forEach((count, output) => {
+    P_t.set(output, count / n);
+  });
+  return P_t;
+}
+
+/**
+ * Construct Q_t^u (user mental model) distribution from user expectations.
+ * If expectedOutput is provided, assign high probability to it and distribute remaining mass.
+ * If expectedVariation is provided, use it to shape the distribution.
+ */
+function constructQ_t_u(
+  P_t: Map<string, number>,
+  userExpectations: { expectedOutput?: string; expectedVariation?: number },
+  actualResponse?: string
+): Map<string, number> {
+  const Q_t_u = new Map<string, number>();
+  const omega = Array.from(P_t.keys());
+  const n = omega.length;
+  
+  if (userExpectations.expectedOutput) {
+    // User provided expected output: assign high probability to it
+    const expected = userExpectations.expectedOutput.trim();
+    const epsilon = 0.01; // Additive smoothing parameter (small)
+    
+    // Find closest match in Ω (exact match or most similar)
+    let bestMatch = expected;
+    let bestMatchFound = false;
+    for (const x of omega) {
+      if (x.toLowerCase() === expected.toLowerCase()) {
+        bestMatch = x;
+        bestMatchFound = true;
+        break;
+      }
+    }
+    
+    // If no exact match, use the expected string as a new outcome
+    if (!bestMatchFound && expected) {
+      bestMatch = expected;
+    }
+    
+    // Construct Q_t^u: high probability on expected, low on others
+    // Use expectedVariation to control concentration
+    const concentration = userExpectations.expectedVariation !== undefined
+      ? 1 - userExpectations.expectedVariation // Low variation = high concentration
+      : 0.8; // Default: high concentration on expected
+    
+    const p_expected = Math.max(0.1, Math.min(0.95, concentration));
+    const p_others = (1 - p_expected) / Math.max(1, n - 1);
+    
+    for (const x of omega) {
+      if (x === bestMatch || x.toLowerCase() === bestMatch.toLowerCase()) {
+        Q_t_u.set(x, p_expected);
+      } else {
+        Q_t_u.set(x, p_others);
+      }
+    }
+    
+    // If expected is not in Ω, add it
+    if (!omega.includes(bestMatch) && bestMatch) {
+      Q_t_u.set(bestMatch, p_expected);
+      // Redistribute others
+      const remaining = 1 - p_expected;
+      const othersCount = omega.length;
+      for (const x of omega) {
+        if (x !== bestMatch && x.toLowerCase() !== bestMatch.toLowerCase()) {
+          Q_t_u.set(x, remaining / othersCount);
+        }
+      }
+    }
+  } else {
+    // No expected output: use uniform distribution as baseline
+    const uniform = 1 / Math.max(1, n);
+    for (const x of omega) {
+      Q_t_u.set(x, uniform);
+    }
+  }
+  
+  // Apply additive smoothing: Q_{t,smooth}^u(x) = (1-ε) Q_t^u(x) + ε/|Ω|
+  const epsilon = 0.01;
+  const smoothed = new Map<string, number>();
+  const uniformMass = epsilon / Math.max(1, Q_t_u.size);
+  Q_t_u.forEach((q, x) => {
+    smoothed.set(x, (1 - epsilon) * q + uniformMass);
+  });
+  
+  // Normalize to ensure sum = 1
+  let sum = 0;
+  smoothed.forEach(q => { sum += q; });
+  if (sum > 0) {
+    const normalized = new Map<string, number>();
+    smoothed.forEach((q, x) => {
+      normalized.set(x, q / sum);
+    });
+    return normalized;
+  }
+  
+  return smoothed;
+}
+
+/**
+ * Compute C using exact formula from paper Section 2.2:
+ * C = Σ_{x∈E_t} P_t(x) Q_t^u(x) / Σ_{x∈E_t} P_t(x)
+ * where E_t = {x : P_t(x) ≥ θ} and θ is the median probability mass.
+ */
+function computeCExact(P_t: Map<string, number>, Q_t_u: Map<string, number>): number | null {
+  if (P_t.size === 0) return null;
+  
+  // Compute median probability mass (θ)
+  const probs = Array.from(P_t.values()).sort((a, b) => b - a);
+  const medianIdx = Math.floor(probs.length / 2);
+  const theta = probs[medianIdx];
+  
+  // E_t = {x : P_t(x) ≥ θ}
+  const E_t = new Set<string>();
+  P_t.forEach((p, x) => {
+    if (p >= theta) {
+      E_t.add(x);
+    }
+  });
+  
+  if (E_t.size === 0) return 0;
+  
+  // Compute numerator: Σ_{x∈E_t} P_t(x) Q_t^u(x)
+  let numerator = 0;
+  let denominator = 0;
+  
+  E_t.forEach(x => {
+    const p = P_t.get(x) || 0;
+    const q = Q_t_u.get(x) || 0; // If x not in Q_t^u, assume 0
+    numerator += p * q;
+    denominator += p;
+  });
+  
+  if (denominator === 0) return 0;
+  
+  return numerator / denominator;
+}
+
+/**
+ * Compute L using exact formula from paper Section 2.2:
+ * L = exp(-λ · D_KL(P_t || Q_{t,smooth}^u))
+ * where λ = 1/H_max and D_KL is KL divergence.
+ */
+function computeLExact(P_t: Map<string, number>, Q_t_u_smooth: Map<string, number>): number | null {
+  if (P_t.size === 0) return null;
+  
+  // Compute H_max = log₂(|Ω|)
+  const H_max = Math.log2(P_t.size || 1);
+  if (H_max === 0) return 1; // Deterministic case
+  
+  const lambda = 1 / H_max;
+  
+  // Compute KL divergence: D_KL(P || Q) = Σ P(x) log₂(P(x) / Q(x))
+  let kl = 0;
+  let hasValidKL = false;
+  
+  P_t.forEach((p, x) => {
+    if (p > 0) {
+      const q = Q_t_u_smooth.get(x) || 0.0001; // Additive smoothing: avoid log(0)
+      if (q > 0) {
+        kl += p * Math.log2(p / q);
+        hasValidKL = true;
+      }
+    }
+  });
+  
+  if (!hasValidKL) return null;
+  
+  // L = exp(-λ · D_KL)
+  const L = Math.exp(-lambda * kl);
+  return Math.max(0, Math.min(1, L)); // Clamp to [0,1]
+}
+
 function computeModifiers(profile?: SystemProfilePayload): ModifierScores {
   // Baseline modifiers roughly aligned with a Level 2–3 surface.
   let O = 0.6;
@@ -204,17 +392,28 @@ function computeTemporalMetricsFromSamples(samples?: string[]): Pick<
 
   const n = samples.length;
   const counts = new Map<string, number>();
+  let validCount = 0; // Count of non-empty samples
   for (const s of samples) {
-    counts.set(s, (counts.get(s) ?? 0) + 1);
+    const trimmed = s.trim();
+    if (trimmed) {
+      counts.set(trimmed, (counts.get(trimmed) ?? 0) + 1);
+      validCount++;
+    }
+  }
+
+  // If no valid samples, return empty
+  if (validCount === 0) {
+    return {};
   }
 
   const distinct = counts.size;
   const temporalVariationRate = distinct / n;
 
   // Shannon entropy over discrete outputs, normalized to [0,1].
+  // Use validCount (not n) as denominator so probabilities sum to 1
   let entropy = 0;
   counts.forEach(count => {
-    const p = count / n;
+    const p = count / validCount;
     entropy -= p * Math.log2(p);
   });
   const maxEntropy = Math.log2(distinct || 1);
@@ -364,41 +563,135 @@ app.post('/api/classify', async (req, res) => {
   let level: PredictabilityLevel = 2;
   let geminiRationale: DimensionRationale | undefined;
   let temporalStabilityFromClassifier: number | undefined;
+  
+  // Determine how many responses to classify
+  // If we have multiple response samples, classify a subset to get averaged results
+  const responseSamples = input.responseSamples || [];
+  const numSamplesToClassify = responseSamples.length > 1
+    ? Math.min(10, responseSamples.length) // Classify up to 10 responses for averaging
+    : 1; // Single classification if no samples or only one sample
+  
   try {
-    // Use 1 sample for free tier (10 req/min limit). Set to 3 for paid tier.
-    const geminiResult = await classifyWithGemini(input, 1);
-    if (geminiResult.T !== undefined && geminiResult.C !== undefined && geminiResult.L !== undefined) {
-      dims = {
-        T: geminiResult.T,
-        C: geminiResult.C,
-        L: geminiResult.L
-      };
-    }
-    if (geminiResult.temporalStability !== undefined && dims.T !== undefined) {
-      // Blend Gemini's T estimate with a simple stability proxy across repeated classifications.
-      const blendedT = 0.7 * dims.T + 0.3 * geminiResult.temporalStability;
-      dims.T = Math.max(0, Math.min(1, blendedT));
-      notes.push(
-        `Temporal stability proxy from repeated classification: ${geminiResult.temporalStability.toFixed(
-          2
-        )}`
-      );
-      temporalStabilityFromClassifier = geminiResult.temporalStability;
-    }
-
-    if (geminiResult.level !== undefined) {
-      const clamped = Math.min(5, Math.max(1, Math.round(geminiResult.level)));
-      level = clamped as PredictabilityLevel;
+    if (numSamplesToClassify > 1) {
+      // Multi-response classification: classify each response and average results
+      const classificationResults: Array<{
+        T?: number;
+        C?: number;
+        L?: number;
+        level?: number;
+        rationale?: DimensionRationale;
+      }> = [];
+      
+      // Classify each response sample (up to the limit)
+      for (let i = 0; i < numSamplesToClassify; i++) {
+        try {
+          const sampleInput: ClassificationInput = {
+            ...input,
+            response: responseSamples[i], // Use this specific response
+            responseSamples: undefined // Don't pass all samples to individual classification
+          };
+          const result = await classifyWithGemini(sampleInput, 1);
+          if (result.T !== undefined && result.C !== undefined && result.L !== undefined) {
+            classificationResults.push({
+              T: result.T,
+              C: result.C,
+              L: result.L,
+              level: result.level,
+              rationale: result.rationale
+            });
+          }
+        } catch (err: any) {
+          console.error(`Error classifying response ${i + 1}/${numSamplesToClassify}:`, err?.message);
+          // Continue with other responses
+        }
+      }
+      
+      if (classificationResults.length > 0) {
+        // Average T, C, L across all classifications
+        const avgT = classificationResults.reduce((sum, r) => sum + (r.T || 0), 0) / classificationResults.length;
+        const avgC = classificationResults.reduce((sum, r) => sum + (r.C || 0), 0) / classificationResults.length;
+        const avgL = classificationResults.reduce((sum, r) => sum + (r.L || 0), 0) / classificationResults.length;
+        
+        dims = {
+          T: Math.max(0, Math.min(1, avgT)),
+          C: Math.max(0, Math.min(1, avgC)),
+          L: Math.max(0, Math.min(1, avgL))
+        };
+        
+        // Compute temporal stability from variance in T scores
+        const tValues = classificationResults.map(r => r.T || 0);
+        const maxT = Math.max(...tValues);
+        const minT = Math.min(...tValues);
+        const range = maxT - minT;
+        temporalStabilityFromClassifier = Math.max(0, Math.min(1, 1 - range));
+        
+        // Blend averaged T with temporal stability
+        const blendedT = 0.7 * dims.T + 0.3 * temporalStabilityFromClassifier;
+        dims.T = Math.max(0, Math.min(1, blendedT));
+        
+        // Average level (round to nearest integer)
+        const avgLevel = classificationResults
+          .filter(r => r.level !== undefined)
+          .reduce((sum, r) => sum + (r.level || 2), 0) / classificationResults.filter(r => r.level !== undefined).length;
+        level = Math.min(5, Math.max(1, Math.round(avgLevel))) as PredictabilityLevel;
+        
+        // Use rationale from first classification (or merge if needed)
+        geminiRationale = classificationResults[0]?.rationale;
+        
+        notes.push(
+          `Averaged classification across ${classificationResults.length} response samples. Temporal stability: ${temporalStabilityFromClassifier.toFixed(2)}`
+        );
+      } else {
+        // Fallback: single classification if all multi-classifications failed
+        const geminiResult = await classifyWithGemini(input, 1);
+        if (geminiResult.T !== undefined && geminiResult.C !== undefined && geminiResult.L !== undefined) {
+          dims = {
+            T: geminiResult.T,
+            C: geminiResult.C,
+            L: geminiResult.L
+          };
+        }
+        if (geminiResult.level !== undefined) {
+          level = Math.min(5, Math.max(1, Math.round(geminiResult.level))) as PredictabilityLevel;
+        }
+        geminiRationale = geminiResult.rationale;
+        notes.push('Multi-response classification failed; using single classification.');
+      }
     } else {
-      const overallHeuristic = (dims.T + dims.C + dims.L) / 3;
-      level = scoreToLevel(overallHeuristic);
-    }
-    if (geminiResult.note) {
-      // Add note without exposing it's from Gemini (cleaner UX)
-      notes.push(geminiResult.note);
-    }
-    if (geminiResult.rationale) {
-      geminiRationale = geminiResult.rationale;
+      // Single classification (no samples or only one sample)
+      const geminiResult = await classifyWithGemini(input, 1);
+      if (geminiResult.T !== undefined && geminiResult.C !== undefined && geminiResult.L !== undefined) {
+        dims = {
+          T: geminiResult.T,
+          C: geminiResult.C,
+          L: geminiResult.L
+        };
+      }
+      if (geminiResult.temporalStability !== undefined && dims.T !== undefined) {
+        // Blend Gemini's T estimate with a simple stability proxy across repeated classifications.
+        const blendedT = 0.7 * dims.T + 0.3 * geminiResult.temporalStability;
+        dims.T = Math.max(0, Math.min(1, blendedT));
+        notes.push(
+          `Temporal stability proxy from repeated classification: ${geminiResult.temporalStability.toFixed(
+            2
+          )}`
+        );
+        temporalStabilityFromClassifier = geminiResult.temporalStability;
+      }
+
+      if (geminiResult.level !== undefined) {
+        const clamped = Math.min(5, Math.max(1, Math.round(geminiResult.level)));
+        level = clamped as PredictabilityLevel;
+      } else {
+        const overallHeuristic = (dims.T + dims.C + dims.L) / 3;
+        level = scoreToLevel(overallHeuristic);
+      }
+      if (geminiResult.note) {
+        notes.push(geminiResult.note);
+      }
+      if (geminiResult.rationale) {
+        geminiRationale = geminiResult.rationale;
+      }
     }
   } catch (err: any) {
     const errorMsg = err?.message || err?.toString() || 'Unknown error';
@@ -408,7 +701,69 @@ app.post('/api/classify', async (req, res) => {
 
   const overall = (dims.T + dims.C + dims.L) / 3;
 
-  const metricsFromSamples = computeTemporalMetricsFromSamples(input.responseSamples);
+  // Use ALL response samples for entropy and exact formulas (even if we only classified a subset)
+  const allResponseSamples = input.responseSamples || [];
+  const metricsFromSamples = computeTemporalMetricsFromSamples(allResponseSamples);
+  
+  // Compute empirical P_t distribution from ALL samples if available
+  const P_t = allResponseSamples.length > 0
+    ? computeEmpiricalDistribution(allResponseSamples)
+    : null;
+  
+  // Use Q_t^u data (user expectations) to refine C and L if available
+  if (input.userExpectations) {
+    // For C (Confidence Predictability): Use exact formula when P_t is available
+    if (P_t && input.userExpectations.expectedVariation !== undefined) {
+      // Construct Q_t^u distribution from user expectations
+      const Q_t_u = constructQ_t_u(P_t, input.userExpectations, input.response);
+      
+      // Compute C using exact formula: C = Σ_{x∈E_t} P_t(x) Q_t^u(x) / Σ_{x∈E_t} P_t(x)
+      const C_exact = computeCExact(P_t, Q_t_u);
+      
+      if (C_exact !== null) {
+        // Blend with Gemini's estimate (50% exact, 50% Gemini) for robustness
+        dims.C = 0.5 * dims.C + 0.5 * C_exact;
+        dims.C = Math.max(0, Math.min(1, dims.C));
+        notes.push(`C computed using exact formula (paper Section 2.2): ${C_exact.toFixed(3)}`);
+      } else {
+        // Fallback to alignment proxy if exact computation fails
+        const expectedVar = input.userExpectations.expectedVariation;
+        const actualVar = metricsFromSamples.temporalVariationRate;
+        if (actualVar !== undefined) {
+          const alignment = 1 - Math.abs(expectedVar - actualVar);
+          dims.C = 0.7 * dims.C + 0.3 * alignment;
+          dims.C = Math.max(0, Math.min(1, dims.C));
+          notes.push(`C refined using alignment proxy: expected variation ${expectedVar.toFixed(2)} vs actual ${actualVar.toFixed(2)}`);
+        }
+      }
+    }
+
+    // For L (Learning Predictability): Use exact KL divergence formula when P_t and Q_t^u are available
+    if (P_t && input.userExpectations.expectedOutput && input.response) {
+      // Construct Q_t^u distribution from expected output
+      const Q_t_u = constructQ_t_u(P_t, input.userExpectations, input.response);
+      
+      // Compute L using exact formula: L = exp(-λ · D_KL(P_t || Q_{t,smooth}^u))
+      const L_exact = computeLExact(P_t, Q_t_u);
+      
+      if (L_exact !== null) {
+        // Blend with Gemini's estimate (50% exact, 50% Gemini) for robustness
+        dims.L = 0.5 * dims.L + 0.5 * L_exact;
+        dims.L = Math.max(0, Math.min(1, dims.L));
+        notes.push(`L computed using exact KL divergence formula (paper Section 2.2): ${L_exact.toFixed(3)}`);
+      } else {
+        // Fallback to Jaccard similarity proxy if exact computation fails
+        const expectedWords = new Set(input.userExpectations.expectedOutput.toLowerCase().split(/\s+/));
+        const actualWords = new Set(input.response.toLowerCase().split(/\s+/));
+        const intersection = new Set([...expectedWords].filter(x => actualWords.has(x)));
+        const union = new Set([...expectedWords, ...actualWords]);
+        const similarity = union.size > 0 ? intersection.size / union.size : 0;
+        dims.L = 0.6 * dims.L + 0.4 * similarity;
+        dims.L = Math.max(0, Math.min(1, dims.L));
+        notes.push(`L refined using Jaccard similarity proxy: ${similarity.toFixed(2)}`);
+      }
+    }
+  }
   const metrics: PredictabilityMetrics = {
     ...metricsFromSamples,
     temporalStabilityFromClassifier

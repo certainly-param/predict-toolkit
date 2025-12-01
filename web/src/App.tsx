@@ -11,6 +11,7 @@ import {
   Container,
   Divider,
   FormControlLabel,
+  IconButton,
   LinearProgress,
   MenuItem,
   Slider,
@@ -21,8 +22,8 @@ import {
   Tooltip,
   Typography
 } from '@mui/material';
-import { ExpandMore, HelpOutline } from '@mui/icons-material';
-import { useMemo, useState } from 'react';
+import { ExpandMore, HelpOutline, Visibility, VisibilityOff } from '@mui/icons-material';
+import React, { useMemo, useState } from 'react';
 
 // ---------- Types ----------
 
@@ -236,20 +237,28 @@ function computeTemporalMetricsFromSamples(samples: string[]): {
 
   const n = samples.length;
   const counts = new Map<string, number>();
+  let validCount = 0; // Count of non-empty samples
   for (const s of samples) {
     const trimmed = s.trim();
     if (trimmed) {
       counts.set(trimmed, (counts.get(trimmed) ?? 0) + 1);
+      validCount++;
     }
+  }
+
+  // If no valid samples, return zeros
+  if (validCount === 0) {
+    return { temporalEntropy: 0, temporalVariationRate: 0 };
   }
 
   const distinct = counts.size;
   const temporalVariationRate = distinct / n;
 
   // Shannon entropy over discrete outputs, normalized to [0,1].
+  // Use validCount (not n) as denominator so probabilities sum to 1
   let entropy = 0;
   counts.forEach(count => {
-    const p = count / n;
+    const p = count / validCount;
     entropy -= p * Math.log2(p);
   });
   const maxEntropy = Math.log2(distinct || 1);
@@ -447,7 +456,7 @@ function DesignLabDocs() {
           <Typography variant="body2" sx={{ mb: 1, pl: 2 }}>
             • <strong>Domain / task:</strong> Describes what the system does and its primary use case. Critical for contextualizing predictability expectations.<br />
             • <strong>Stakes of mistakes:</strong> Low/Medium/High. High-stakes systems (medical, financial) require stricter predictability than low-stakes ones (entertainment, casual chat).<br />
-            • <strong>Typical user expertise:</strong> Novice/Intermediate/Expert. Novice users need more predictable systems; experts can handle more variation.<br />
+            • <strong>Typical user expertise:</strong> Novice/Intermediate/Expert. Used for modifier calculations and design guidance only—<strong>not</strong> sent to Gemini for classification to ensure unbiased assessment. Novice users benefit from higher observability and feedback responsiveness in modifier calculations; experts can handle more variation. Design guidance adapts based on expertise (e.g., "Gate advanced behaviors behind expertise-sensitive controls" for expert users).<br />
             • <strong>UI Features:</strong> Select UI features your system has or plans to implement (O, I, S, A). These directly influence modifier scores and design guidance:
             <br />&nbsp;&nbsp;- <strong>O (Observability):</strong> Confidence badges, rationale views that show what the system did and why<br />
             <br />&nbsp;&nbsp;- <strong>I (Intervention):</strong> Interrupt/abort buttons that let users stop or correct the system<br />
@@ -459,10 +468,10 @@ function DesignLabDocs() {
             <br />&nbsp;&nbsp;- <strong>Assumption dimensions:</strong> Your assumed T/C/L scores (0-1). Used to compare your assumptions against Gemini&apos;s independent assessment. Helps identify gaps: &quot;I assumed T=0.75, but got T=0.60—what&apos;s causing lower temporal predictability?&quot;
           </Typography>
           <Typography variant="body2" sx={{ mb: 2, pl: 2, fontStyle: 'italic', color: 'text.secondary' }}>
-            <strong>Important:</strong> Gemini (the classifier running in the backend) evaluates your description and responses to provide an <strong>independent assessment</strong>. It evaluates based only on your system description, UI features, and probe results—it does <strong>not</strong> see your assumption scores or assumed level. This ensures unbiased classification. After receiving results, you can compare them to your assumptions in Step 3 to identify gaps and validate your expectations.
+            <strong>Important:</strong> Gemini (the classifier running in the backend) evaluates your description and responses to provide an <strong>independent, raw assessment</strong>. It evaluates based only on your system description (domain, stakes, UI features) and probe results—it does <strong>not</strong> see your assumption scores, assumed level, or user expertise. User expertise is excluded from classification to prevent bias and ensure the assessment reflects the system's actual predictability, not assumptions about users. Expertise is still used for modifier calculations and design guidance (deterministic, server-side adjustments). After receiving results, you can compare them to your assumptions in Step 3 to identify gaps and validate your expectations.
           </Typography>
           <Typography variant="body2" sx={{ mb: 2, pl: 2, fontStyle: 'italic', color: 'text.secondary' }}>
-            <strong>Example:</strong> For a medical diagnosis assistant, you might set: Domain: "Clinical decision support for primary care", Stakes: "High", Expertise: "Expert", UI Features: O (confidence badges), S (safe mode), Assumed level: 2, Assumption T/C/L: 0.85/0.80/0.75. The AI will classify based on your description and UI features, and you can compare its assessment to your assumptions. If you assumed Level 2 but got Level 3, you can analyze why there&apos;s a gap.
+            <strong>Example:</strong> For a medical diagnosis assistant, you might set: Domain: "Clinical decision support for primary care", Stakes: "High", Expertise: "Expert", UI Features: O (confidence badges), S (safe mode), Assumed level: 2, Assumption T/C/L: 0.85/0.80/0.75. The AI will classify based on your domain, stakes, and UI features only (expertise is excluded for unbiased assessment). Modifier calculations and design guidance will still use expertise appropriately. You can compare the assessment to your assumptions. If you assumed Level 2 but got Level 3, you can analyze why there&apos;s a gap.
           </Typography>
 
           <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 1, mt: 2 }}>
@@ -488,10 +497,21 @@ function DesignLabDocs() {
             • <strong>For testing learnability (L):</strong> Use sequences of related tasks to see if patterns emerge
           </Typography>
           <Typography variant="body2" sx={{ mb: 1 }}>
-            <strong>Auto-generate Responses:</strong> Enable the &quot;Auto-generate 5 responses&quot; checkbox to automatically generate multiple responses for entropy calculation. The system will generate 5 responses based on your probe prompt and system description, which are then used to calculate temporal entropy and variation rate—normalized metrics that quantify unpredictability. Higher entropy indicates more variation.
+            <strong>Auto-generate Responses (P<sub>t</sub> Approximation):</strong> Enable the checkbox to automatically generate multiple responses for entropy calculation and improved classification. You can configure the number of samples (default: 20, range: 5-50). The system will:
+            <br />• Generate the specified number of responses based on your probe prompt and system description
+            <br />• Classify up to 10 of them independently and average the T/C/L scores for more robust assessment
+            <br />• Use all generated responses to calculate temporal entropy and variation rate (P<sub>t</sub> approximation)
+            <br />• Automatically display temporal metrics in Step 3 results
+            <br />Higher entropy indicates more variation. More samples provide better P<sub>t</sub> approximation but take longer.
+          </Typography>
+          <Typography variant="body2" sx={{ mb: 1 }}>
+            <strong>Interactive Probe (Q<sub>t</sub><sup>u</sup> Capture):</strong> Optionally record your expectations before running the probe to improve C and L accuracy:
+            <br />• <strong>Expected output:</strong> Describe what you expect the system to produce. This helps construct your mental model (Q<sub>t</sub><sup>u</sup>) for Learning predictability calculation.
+            <br />• <strong>Expected variation:</strong> Use the slider (0 = identical, 1 = completely different) to indicate how much variation you expect across repeated uses. This helps refine Confidence predictability.
+            <br />When provided, the toolkit uses exact formulas from the paper (Section 2.2) to compute C and L, blending them with Gemini's estimates for robustness.
           </Typography>
           <Typography variant="body2" sx={{ mb: 2, pl: 2, fontStyle: 'italic', color: 'text.secondary' }}>
-            <strong>Example:</strong> For a code completion tool, enter the probe prompt: &quot;def process_data(data: List[Dict]) -&gt; Dict:&quot;. Enable auto-generate to get 5 different completions. The lab will compute how much variation there is, indicating Temporal predictability.
+            <strong>Example:</strong> For a code completion tool, enter the probe prompt: &quot;def process_data(data: List[Dict]) -&gt; Dict:&quot;. Enable auto-generate with 20 samples. Optionally fill in: Expected output: &quot;I expect it to complete with error handling and type hints&quot;, Expected variation: 0.2 (low variation). The lab will generate 20 responses, classify 10 of them and average results, compute entropy from all 20, and use your expectations to refine C and L using exact formulas.
           </Typography>
 
           <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 1, mt: 2 }}>
@@ -504,18 +524,24 @@ function DesignLabDocs() {
             <strong>Logic:</strong> The classifier (powered by Gemini) analyzes your system description and probe results to assign a PSF level (1-5) and T/C/L scores (0-1). It also computes modifier scores and provides rationale explaining the classification.
           </Typography>
           <Typography variant="body2" sx={{ mb: 2, pl: 2, fontStyle: 'italic', color: 'text.secondary', borderLeft: '3px solid', borderColor: 'primary.main', bgcolor: 'action.hover', p: 1.5, borderRadius: 1 }}>
-            <strong>How the Toolkit Estimates T/C/L (Proxy Method):</strong> The paper's mathematical definitions require access to the true model distribution P_t and user mental models Q_t^u, which are often infeasible to measure directly (especially Q_t^u). This toolkit uses Gemini as an <strong>automated proxy classifier</strong>—similar to the "interactive mental-model probes" mentioned in Section 2.4 of the paper. Gemini analyzes your system description, UI features, and example responses to estimate T/C/L scores based on its understanding of predictability patterns. This is an <strong>approximation method</strong> that helps classify systems into PSF levels and identify trends, rather than computing the exact mathematical formulas. For production deployments, teams should use the proxy instrumentation methods described in the paper (entropy tracking, calibration metrics, user feedback logs, etc.) to get more precise measurements.
+            <strong>How the Toolkit Computes T/C/L (Hybrid Approach):</strong> The toolkit uses a hybrid approach combining exact formulas and proxy methods:
+            <br />• <strong>T (Temporal):</strong> Uses exact Shannon entropy formula from the paper (Section 2.2) when response samples are available. Computes H = -Σ p log₂(p) and normalizes to T = 1 - H/H_max. When auto-generate is enabled, classifies multiple responses and averages T scores for robustness.
+            <br />• <strong>C (Confidence):</strong> Uses exact formula (C = Σ P_t(x) Q_t^u(x) / Σ P_t(x)) when response samples and user expectations are provided. Otherwise uses Gemini as a proxy classifier. Blends 50% exact + 50% Gemini estimate when both are available.
+            <br />• <strong>L (Learning):</strong> Uses exact KL divergence formula (L = exp(-λ · D_KL(P_t || Q_t^u))) when response samples and expected output are provided. Otherwise uses Gemini as a proxy classifier. Blends 50% exact + 50% Gemini estimate when both are available.
+            <br />This hybrid approach provides mathematical rigor when data is available, while gracefully falling back to proxy methods (as recommended in paper Section 2.4) when direct measurement is infeasible.
           </Typography>
           <Typography variant="body2" sx={{ mb: 1 }}>
             <strong>What You'll See:</strong>
           </Typography>
           <Typography variant="body2" sx={{ mb: 1, pl: 2 }}>
-            • <strong>Assumed vs Actual Comparison:</strong> If you set assumed level or assumption T/C/L in Step 1, you&apos;ll see a comparison box showing your assumptions vs Gemini&apos;s independent assessment. This helps identify gaps and validate expectations.<br />
-            • <strong>PSF Level:</strong> Overall predictability level from 1 (fully predictable) to 5 (open-ended)<br />
-            • <strong>T/C/L Dimensions:</strong> Scores for Temporal, Confidence, and Learning predictability<br />
+            • <strong>Assumed vs Actual Comparison:</strong> If you set assumed level or assumption T/C/L in Step 1, you&apos;ll see a comparison box showing your assumptions vs the independent assessment. This helps identify gaps and validate expectations.<br />
+            • <strong>PSF Level:</strong> Overall predictability level from 1 (fully predictable) to 5 (open-ended), averaged across multiple classifications when auto-generate is used<br />
+            • <strong>T/C/L Dimensions:</strong> Scores for Temporal, Confidence, and Learning predictability (averaged when multiple responses are classified)<br />
+            • <strong>AI System Outputs:</strong> Toggle button to show/hide the actual responses generated by the system (hidden by default to keep view clean)<br />
+            • <strong>Temporal Metrics (P<sub>t</sub> Approximation):</strong> Automatically computed entropy and variation rate when auto-generate is enabled. Shows computed values and indicates when exact formulas were used<br />
             • <strong>Modifiers:</strong> Eight modifier traits (O, I, X, Lp, F, S, A, D) that influence how predictability feels in practice<br />
-            • <strong>Temporal Metrics:</strong> Entropy and variation rate (if you provided sampled outputs)<br />
-            • <strong>Rationale:</strong> Explanation of why the system received its classification, including textual cues the classifier identified
+            • <strong>Rationale:</strong> Explanation of why the system received its classification, including textual cues the classifier identified<br />
+            • <strong>Notes:</strong> Technical details about computation method (e.g., "Averaged classification across 10 response samples", "C computed using exact formula")
           </Typography>
           <Typography variant="body2" sx={{ mb: 2, pl: 2, fontStyle: 'italic', color: 'text.secondary' }}>
             <strong>Example:</strong> A code completion tool might receive: Level 2 (Mostly predictable), T: 0.75, C: 0.65, L: 0.70. If you assumed Level 2 and T/C/L of 0.80/0.70/0.75, the comparison will show: Assumed Level 2 vs Actual Level 2 (match!), Assumed T: 0.80 vs Actual T: 0.75 (gap: -0.05), etc. Rationale: &quot;The system shows consistent behavior on common patterns (high T) but occasionally suggests unexpected completions (moderate C). Users learn its patterns quickly (high L).&quot;
@@ -560,12 +586,12 @@ function DesignLabDocs() {
             <strong>Features:</strong>
           </Typography>
           <Typography variant="body2" sx={{ mb: 1, pl: 2 }}>
-            • <strong>Session Health Snapshot:</strong> Visual summary showing number of probes run, average T/C/L scores, and a sparkline chart of PSF levels over time<br />
-            • <strong>Assessment History:</strong> List of all probes run with their results, organized chronologically<br />
-            • <strong>Export JSON:</strong> Download complete session data including profiles, probes, results, and metadata for external analysis
+            • <strong>Quick Self-Report (PSF-aligned):</strong> Rate your perception of the system using sliders aligned with PSF dimensions (trust, expected variation, uncertainty communication, learnability, checking frequency). This captures your mental model (Q<sub>t</sub><sup>u</sup>) for comparison with model assessments.<br />
+            • <strong>Session Snapshot:</strong> Visual summary showing number of probes run, average T/C/L scores across all runs<br />
+            • <strong>Assessment History:</strong> List of all probes run with their results, organized chronologically
           </Typography>
           <Typography variant="body2" sx={{ mb: 2, pl: 2, fontStyle: 'italic', color: 'text.secondary' }}>
-            <strong>Example:</strong> After running 5 probes on different configurations of a chatbot, you might see: Average T: 0.68, C: 0.72, L: 0.65. The sparkline shows levels ranging from 2 to 3, helping you identify which configurations are more predictable.
+            <strong>Example:</strong> After running 5 probes on different configurations of a chatbot, you might see: Average T: 0.68, C: 0.72, L: 0.65. Compare your self-reported expectations (e.g., "I expected low variation") with the actual T/C/L scores to identify gaps in your mental model.
           </Typography>
 
           <Divider sx={{ my: 3 }} />
@@ -619,6 +645,27 @@ function DesignLabDocs() {
           <Divider sx={{ my: 3 }} />
 
           <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
+            User Expertise: How It's Used
+          </Typography>
+          <Typography variant="body2" sx={{ mb: 1 }}>
+            <strong>Purpose:</strong> The "Typical user expertise" field (Novice/Intermediate/Expert) is used for modifier calculations and design guidance, but <strong>excluded from Gemini classification</strong> to ensure unbiased, raw assessment of system predictability.
+          </Typography>
+          <Typography variant="body2" sx={{ mb: 1 }}>
+            <strong>How Expertise Is Used:</strong>
+          </Typography>
+          <Typography variant="body2" sx={{ mb: 1, pl: 2 }}>
+            • <strong>Modifier Calculations:</strong> Expertise affects Observability (O) and Feedback responsiveness (F) modifiers. Novice users get +0.1 to O and F (they benefit from higher observability and feedback). Expert users get -0.05 to O (they can tolerate lower observability if other cues exist). These are deterministic, server-side adjustments.<br />
+            • <strong>Design Guidance:</strong> Expertise influences guidance generation. For example, if expertise is "novice" and level ≥ 3, guidance suggests "Provide novice-friendly pathways into higher levels." If expertise is "expert", guidance may suggest "Gate advanced behaviors behind expertise-sensitive controls."<br />
+            • <strong>NOT Used for Classification:</strong> Expertise is <strong>excluded</strong> from the system description sent to Gemini. This ensures the classification reflects the system's actual predictability, not assumptions about users. The goal is to test the system "raw" and get an unbiased assessment.<br />
+            • <strong>NOT Used for Mental Model Mapping (Q_t^u):</strong> The mental model (Q_t^u) is constructed from the Interactive Probe section (expected output and expected variation), not from expertise. Expertise does not influence C or L calculations via Q_t^u.
+          </Typography>
+          <Typography variant="body2" sx={{ mb: 2, pl: 2, fontStyle: 'italic', color: 'text.secondary' }}>
+            <strong>Rationale:</strong> We want Gemini to assess predictability based on system behavior (domain, stakes, UI features, responses), not user assumptions. Expertise is still valuable for modifier adjustments and guidance, but keeping it separate from classification ensures the assessment is objective and reflects the system's true predictability characteristics.
+          </Typography>
+
+          <Divider sx={{ my: 3 }} />
+
+          <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
             Advanced Assumptions: Comparison-Only Fields
           </Typography>
           <Typography variant="body2" sx={{ mb: 1 }}>
@@ -660,25 +707,35 @@ function DesignLabDocs() {
             Probes should reflect real-world interactions. Test scenarios users actually encounter. Example: For a translation tool, probe with "Translate a technical document with domain-specific terminology" rather than "Translate hello."
           </Typography>
           <Typography variant="body2" sx={{ mb: 1 }}>
-            <strong>3. Use Auto-generate for Entropy Calculation</strong>
+            <strong>3. Use Auto-generate for Better Assessment</strong>
           </Typography>
           <Typography variant="body2" sx={{ mb: 2, pl: 2 }}>
-            Enable auto-generate to automatically generate 5 responses for entropy calculation. Multiple outputs enable precise temporal metrics (entropy and variation rate). Example: For a code generator, enable auto-generate to get 5 different completions for the same prompt to see variation.
+            Enable auto-generate to get more robust assessments. The toolkit will generate multiple responses (default: 20, configurable 5-50), classify a subset and average results, and automatically compute temporal metrics. This provides:
+            <br />• More robust T/C/L scores through averaging
+            <br />• Automatic entropy calculation (no need to run multiple probes)
+            <br />• Better P<sub>t</sub> approximation for exact C/L formulas
+            <br />Example: For a code generator, enable auto-generate with 20 samples to get averaged classification and precise temporal metrics in one run.
           </Typography>
           <Typography variant="body2" sx={{ mb: 1 }}>
-            <strong>4. Compare Configurations Systematically</strong>
+            <strong>4. Use Interactive Probes for Exact Formulas</strong>
+          </Typography>
+          <Typography variant="body2" sx={{ mb: 2, pl: 2 }}>
+            Fill in the Interactive Probe section (expected output and variation) to enable exact C and L formulas from the paper. When you provide your expectations (Q<sub>t</sub><sup>u</sup>), the toolkit computes Confidence and Learning predictability using the exact mathematical formulas (Section 2.2), blending them with Gemini estimates for robustness. This significantly improves mathematical accuracy compared to proxy-only methods.
+          </Typography>
+          <Typography variant="body2" sx={{ mb: 1 }}>
+            <strong>5. Compare Configurations Systematically</strong>
           </Typography>
           <Typography variant="body2" sx={{ mb: 2, pl: 2 }}>
             Use Compare to test design hypotheses. Change one modifier at a time to isolate effects. Example: Run probes with and without confidence badges to measure the impact of Observability on Confidence predictability.
           </Typography>
           <Typography variant="body2" sx={{ mb: 1 }}>
-            <strong>5. Review Rationale Explanations</strong>
+            <strong>6. Review Rationale Explanations</strong>
           </Typography>
           <Typography variant="body2" sx={{ mb: 2, pl: 2 }}>
             The classifier provides explanations for its assessments. These reveal which textual cues influenced the classification. Use this to refine your system descriptions and understand the framework's reasoning.
           </Typography>
           <Typography variant="body2" sx={{ mb: 1 }}>
-            <strong>6. Using the Lab for Design vs Assessment</strong>
+            <strong>7. Using the Lab for Design vs Assessment</strong>
           </Typography>
           <Typography variant="body2" sx={{ mb: 2, pl: 2 }}>
             <strong>For Assessment:</strong> Describe the system as it currently exists. Run probes with actual system outputs when possible. Use results to identify gaps and prioritize improvements.<br />
@@ -698,7 +755,8 @@ function PSFVisualization({
   intendedLevel,
   history,
   currentProbePrompt,
-  onCalculateEntropy
+  onCalculateEntropy,
+  responseTexts
 }: {
   result: ClassificationResponse;
   expected?: Dimensions;
@@ -706,7 +764,9 @@ function PSFVisualization({
   history?: RunRecord[];
   currentProbePrompt?: string;
   onCalculateEntropy?: (metrics: { temporalEntropy: number; temporalVariationRate: number }) => void;
+  responseTexts?: string[];
 }) {
+  const [showOutputs, setShowOutputs] = useState(false);
   const hasAssumptions = expected !== undefined || intendedLevel !== undefined;
   
   // Check if we have enough responses for entropy calculation
@@ -807,18 +867,105 @@ function PSFVisualization({
           />
         </Box>
       ))}
+      {responseTexts && responseTexts.length > 0 && (
+        <Box sx={{ mt: 1 }}>
+          <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mb: 0.5 }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+              AI System Output{responseTexts.length > 1 ? 's' : ''}
+            </Typography>
+            <IconButton
+              size="small"
+              onClick={() => setShowOutputs(!showOutputs)}
+              sx={{ p: 0.5 }}
+              title={showOutputs ? 'Hide outputs' : 'Show outputs'}
+            >
+              {showOutputs ? <VisibilityOff fontSize="small" /> : <Visibility fontSize="small" />}
+            </IconButton>
+            <Typography variant="caption" color="text.secondary">
+              ({responseTexts.length} response{responseTexts.length > 1 ? 's' : ''})
+            </Typography>
+          </Stack>
+          {showOutputs && (
+            <Box sx={{ p: 1.5, bgcolor: 'action.hover', borderRadius: 1 }}>
+              {responseTexts.length === 1 ? (
+                <Typography 
+                  variant="body2" 
+                  sx={{ 
+                    whiteSpace: 'pre-wrap', 
+                    wordBreak: 'break-word',
+                    fontFamily: 'monospace',
+                    bgcolor: 'background.paper',
+                    p: 1,
+                    borderRadius: 1,
+                    border: '1px solid',
+                    borderColor: 'divider'
+                  }}
+                >
+                  {responseTexts[0]}
+                </Typography>
+              ) : (
+                <Stack spacing={1}>
+                  <Typography variant="caption" color="text.secondary">
+                    Showing {responseTexts.length} generated responses (used for entropy calculation):
+                  </Typography>
+                  {responseTexts.slice(0, 5).map((response, idx) => (
+                    <Box key={idx} sx={{ position: 'relative' }}>
+                      <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5 }}>
+                        Response {idx + 1}:
+                      </Typography>
+                      <Typography 
+                        variant="body2" 
+                        sx={{ 
+                          whiteSpace: 'pre-wrap', 
+                          wordBreak: 'break-word',
+                          fontFamily: 'monospace',
+                          bgcolor: 'background.paper',
+                          p: 1,
+                          borderRadius: 1,
+                          border: '1px solid',
+                          borderColor: 'divider',
+                          fontSize: '0.875rem',
+                          maxHeight: 150,
+                          overflow: 'auto'
+                        }}
+                      >
+                        {response}
+                      </Typography>
+                    </Box>
+                  ))}
+                  {responseTexts.length > 5 && (
+                    <Typography variant="caption" color="text.secondary">
+                      ... and {responseTexts.length - 5} more response(s) (all used for entropy calculation)
+                    </Typography>
+                  )}
+                </Stack>
+              )}
+            </Box>
+          )}
+        </Box>
+      )}
       {result.metrics && (result.metrics.temporalEntropy !== undefined ||
         result.metrics.temporalVariationRate !== undefined) && (
-        <Box sx={{ mt: 1 }}>
-          <Typography variant="caption">Temporal metrics</Typography>
-          <Typography variant="caption" display="block">
-            Entropy: {result.metrics.temporalEntropy?.toFixed(2) ?? '–'} · Variation:{' '}
-            {result.metrics.temporalVariationRate?.toFixed(2) ?? '–'}
+        <Box sx={{ mt: 1, p: 1.5, bgcolor: 'action.hover', borderRadius: 1 }}>
+          <Typography variant="subtitle2" sx={{ mb: 0.5, fontWeight: 600 }}>
+            Temporal Metrics (P<sub>t</sub> Approximation)
+          </Typography>
+          <Typography variant="body2" display="block">
+            <strong>Entropy:</strong> {result.metrics.temporalEntropy?.toFixed(3) ?? '–'} 
+            {' · '}
+            <strong>Variation Rate:</strong> {result.metrics.temporalVariationRate?.toFixed(3) ?? '–'}
+          </Typography>
+          <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+            Computed from {result.metrics.temporalEntropy !== undefined ? 'response samples' : 'available data'}. 
+            Lower entropy = more predictable outputs.
           </Typography>
         </Box>
       )}
-      {history && currentProbePrompt && (
+      {history && currentProbePrompt && !result.metrics?.temporalEntropy && (
         <Box sx={{ mt: 2 }}>
+          <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+            <strong>Tip:</strong> Enable "Auto-generate responses" to automatically calculate temporal entropy and variation rate from multiple response samples.
+          </Typography>
           <Button
             variant="outlined"
             size="small"
@@ -826,7 +973,7 @@ function PSFVisualization({
             onClick={handleCalculateEntropy}
             sx={{ mb: 1 }}
           >
-            Calculate entropy/variation
+            Calculate entropy/variation (manual)
           </Button>
           {!canCalculateEntropy && allResponses.length > 0 && (
             <Typography variant="caption" color="text.secondary" display="block">
@@ -835,7 +982,7 @@ function PSFVisualization({
           )}
           {!canCalculateEntropy && allResponses.length === 0 && (
             <Typography variant="caption" color="text.secondary" display="block">
-              Need 3+ responses to calculate entropy/variation. Enable auto-generate (generates 5 responses) and run the probe.
+              Need 3+ responses to calculate entropy/variation. Enable auto-generate (generates 20 responses by default) and run the probe.
             </Typography>
           )}
         </Box>
@@ -881,41 +1028,66 @@ function AssessTab({
   lastResult,
   loading,
   error,
-  history
+  history,
+  profile,
+  setProfile,
+  probePrompt,
+  setProbePrompt,
+  autoGenerate,
+  setAutoGenerate,
+  sampleCount,
+  setSampleCount,
+  expectedOutput,
+  setExpectedOutput,
+  expectedVariation,
+  setExpectedVariation,
+  calculatedMetrics,
+  setCalculatedMetrics
 }: {
-  onRun: (profile: SystemProfile, prompt: string, responseTexts?: string[]) => Promise<void>;
+  onRun: (
+    profile: SystemProfile, 
+    prompt: string, 
+    responseTexts?: string[],
+    userExpectations?: { expectedOutput?: string; expectedVariation?: number; expectedConfidence?: number },
+    sampleCount?: number
+  ) => Promise<void>;
   lastResult: ClassificationResponse | null;
   loading: boolean;
   error: string | null;
   history?: RunRecord[];
-}) {
-  const [profile, setProfile] = useState<SystemProfile>({
-    domain: '',
-    stakes: 'medium',
-    expertise: 'intermediate',
-    intendedLevel: 3,
-    expected: { T: 0.6, C: 0.6, L: 0.6 },
-    keyModifiers: ['O', 'I']
-  });
-  const [probePrompt, setProbePrompt] = useState('');
-  const [autoGenerate, setAutoGenerate] = useState(false);
-  const [calculatedMetrics, setCalculatedMetrics] = useState<{
+  profile: SystemProfile;
+  setProfile: React.Dispatch<React.SetStateAction<SystemProfile>>;
+  probePrompt: string;
+  setProbePrompt: React.Dispatch<React.SetStateAction<string>>;
+  autoGenerate: boolean;
+  setAutoGenerate: React.Dispatch<React.SetStateAction<boolean>>;
+  sampleCount: number;
+  setSampleCount: React.Dispatch<React.SetStateAction<number>>;
+  expectedOutput: string;
+  setExpectedOutput: React.Dispatch<React.SetStateAction<string>>;
+  expectedVariation: number | null;
+  setExpectedVariation: React.Dispatch<React.SetStateAction<number | null>>;
+  calculatedMetrics: {
     temporalEntropy?: number;
     temporalVariationRate?: number;
-  } | null>(null);
-
+  } | null;
+  setCalculatedMetrics: React.Dispatch<React.SetStateAction<{
+    temporalEntropy?: number;
+    temporalVariationRate?: number;
+  } | null>>;
+}) {
   const handleAnalyze = async () => {
     const prompt = probePrompt;
     
     let responseTexts: string[] | undefined;
     
     if (autoGenerate) {
-      // Auto-generate 5 responses
+      // Auto-generate responses (configurable count for better P_t approximation)
       try {
+        // System description for response generation (exclude expertise for raw assessment)
         const systemDescription = [
           profile.domain && `Domain: ${profile.domain}`,
-          `Stakes: ${profile.stakes}`,
-          `Users: ${profile.expertise}`
+          `Stakes: ${profile.stakes}`
         ]
           .filter(Boolean)
           .join(' | ');
@@ -926,7 +1098,7 @@ function AssessTab({
           body: JSON.stringify({
             prompt,
             systemDescription,
-            count: 5
+            count: sampleCount // Use configurable sample count
           })
         });
         
@@ -939,7 +1111,14 @@ function AssessTab({
       }
     }
     
-    await onRun(profile, prompt, responseTexts);
+    // Prepare user expectations (Q_t^u data) for interactive probe
+    const userExpectations = {
+      expectedOutput: expectedOutput || undefined,
+      expectedVariation: expectedVariation !== null ? expectedVariation : undefined,
+      expectedConfidence: undefined // Can be added later
+    };
+    
+    await onRun(profile, prompt, responseTexts, userExpectations, sampleCount);
     // Reset calculated metrics when running a new probe
     setCalculatedMetrics(null);
   };
@@ -1000,24 +1179,17 @@ function AssessTab({
                   <HelpOutline fontSize="small" />
                 </Tooltip>
               </Stack>
-              <Stack direction="row" spacing={1}>
+              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                 {(['O', 'I', 'S', 'A'] as const).map(m => {
                   const modInfo = MODIFIERS_INFO.find(info => info.key === m);
+                  const displayLabel = modInfo?.label || m;
                   return (
                     <Tooltip
                       key={m}
-                      title={
-                        m === 'O'
-                          ? 'Observability (O): Controlled via confidence badges and rationale views'
-                          : m === 'I'
-                          ? 'Intervention (I): Controlled via interrupt/abort buttons'
-                          : m === 'S'
-                          ? 'Safety posture (S): Controlled via safe mode / conservative mode'
-                          : 'Social alignment (A): Controlled via rationale views showing reasoning traces'
-                      }
+                      title={modInfo?.summary || ''}
                     >
                       <Chip
-                        label={m}
+                        label={displayLabel}
                         color={profile.keyModifiers.includes(m) ? 'primary' : 'default'}
                         variant={profile.keyModifiers.includes(m) ? 'filled' : 'outlined'}
                         size="small"
@@ -1124,14 +1296,82 @@ function AssessTab({
                   disabled={loading}
                 />
               }
-              label="Auto-generate 5 responses for entropy calculation"
-              sx={{ mb: 2 }}
+              label={
+                <span>
+                  Auto-generate responses for entropy calculation (P<sub>t</sub> approximation)
+                </span>
+              }
+              sx={{ mb: 1 }}
             />
             {autoGenerate && (
-              <Typography variant="caption" color="text.secondary" sx={{ mb: 2, display: 'block' }}>
-                5 responses will be automatically generated when you run the probe. These will be used to calculate temporal entropy and variation rate.
-              </Typography>
+              <Box sx={{ mb: 2, pl: 4 }}>
+                <TextField
+                  label="Number of samples"
+                  type="number"
+                  value={sampleCount}
+                  onChange={e => setSampleCount(Math.max(5, Math.min(50, parseInt(e.target.value) || 20)))}
+                  size="small"
+                  sx={{ width: 200, mr: 2 }}
+                  helperText={
+                    <span style={{ whiteSpace: 'nowrap' }}>
+                      More samples = better P<sub>t</sub> approximation (5-50 recommended)
+                    </span>
+                  }
+                />
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                  {sampleCount} responses will be generated to approximate the true model distribution (P<sub>t</sub>). Higher counts provide better temporal predictability estimates but take longer.
+                </Typography>
+              </Box>
             )}
+            
+            <Divider sx={{ my: 2 }} />
+            
+            <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+              Interactive Probe (Optional): Capture User Expectations (Q<sub>t</sub><sup>u</sup>)
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+              Before running the probe, optionally record what you expect the system to do. This helps approximate your mental model (Q<sub>t</sub><sup>u</sup>) for more accurate C and L scores.
+            </Typography>
+            <TextField
+              label="What do you expect the system to output? (optional)"
+              placeholder="e.g., I expect it to complete the function with error handling..."
+              value={expectedOutput}
+              onChange={e => setExpectedOutput(e.target.value)}
+              fullWidth
+              multiline
+              minRows={2}
+              sx={{ mb: 1.5 }}
+            />
+            <Box sx={{ mb: 2, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              <Typography variant="body2" sx={{ mb: 1, width: '100%' }}>
+                Expected variation across repeated uses (0 = identical, 1 = completely different):
+              </Typography>
+              <Box sx={{ width: '60%', maxWidth: 400, mb: 1 }}>
+                <Slider
+                  value={expectedVariation !== null ? Math.max(0, Math.min(1, expectedVariation)) : 0.5}
+                  min={0}
+                  max={1}
+                  step={0.1}
+                  marks={[
+                    { value: 0, label: '0 (identical)' },
+                    { value: 0.5, label: '0.5' },
+                    { value: 1, label: '1 (different)' }
+                  ]}
+                  valueLabelDisplay="auto"
+                  onChange={(_, v) => {
+                    const clampedValue = Math.max(0, Math.min(1, v as number));
+                    setExpectedVariation(clampedValue);
+                  }}
+                />
+              </Box>
+              <Button
+                size="small"
+                onClick={() => setExpectedVariation(null)}
+                disabled={expectedVariation === null}
+              >
+                Clear
+              </Button>
+            </Box>
             <Stack direction="row" justifyContent="flex-end" sx={{ mt: 2 }}>
               <Button
                 variant="contained"
@@ -1181,6 +1421,7 @@ function AssessTab({
               history={history}
               currentProbePrompt={probePrompt}
               onCalculateEntropy={handleCalculateEntropy}
+              responseTexts={history && history.length > 0 ? history[history.length - 1].responseTexts : undefined}
             />
           )}
         </CardContent>
@@ -1411,6 +1652,25 @@ function PSFDesignLab() {
   const [lastResult, setLastResult] = useState<ClassificationResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // Lift state from AssessTab to persist across tab switches
+  const [profile, setProfile] = useState<SystemProfile>({
+    domain: '',
+    stakes: 'medium',
+    expertise: 'intermediate',
+    intendedLevel: 3,
+    expected: { T: 0.6, C: 0.6, L: 0.6 },
+    keyModifiers: ['O', 'I']
+  });
+  const [probePrompt, setProbePrompt] = useState('');
+  const [autoGenerate, setAutoGenerate] = useState(false);
+  const [sampleCount, setSampleCount] = useState(20);
+  const [expectedOutput, setExpectedOutput] = useState('');
+  const [expectedVariation, setExpectedVariation] = useState<number | null>(null);
+  const [calculatedMetrics, setCalculatedMetrics] = useState<{
+    temporalEntropy?: number;
+    temporalVariationRate?: number;
+  } | null>(null);
 
   const hasAnyRuns = history.length > 0;
   const hasAtLeastTwoRuns = history.length > 1;
@@ -1418,16 +1678,22 @@ function PSFDesignLab() {
   const runProbe = async (
     profile: SystemProfile,
     prompt: string,
-    responseTexts?: string[]
+    responseTexts?: string[],
+    userExpectations?: {
+      expectedOutput?: string;
+      expectedVariation?: number;
+      expectedConfidence?: number;
+    },
+    sampleCount?: number
   ) => {
     setLoading(true);
     setError(null);
     try {
-      // System description sent to Gemini (no hints about expected scores or intended level)
+      // System description sent to Gemini (no hints about expected scores, intended level, or user expertise)
+      // We exclude expertise to get a raw, unbiased assessment of the system's predictability
       const systemDescription = [
         profile.domain && `Domain: ${profile.domain}`,
         `Stakes: ${profile.stakes}`,
-        `Users: ${profile.expertise}`,
         profile.keyModifiers.length > 0 &&
           `Key modifiers: ${profile.keyModifiers.join(', ')}`
       ]
@@ -1454,7 +1720,9 @@ function PSFDesignLab() {
             interruptButton: profile.keyModifiers.includes('I'),
             safeMode: profile.keyModifiers.includes('S'),
             rationaleView: profile.keyModifiers.includes('A')
-          }
+          },
+          userExpectations, // Send user expectations for Q_t^u approximation
+          sampleCount // Number of samples to generate for better P_t approximation
         })
       });
 
@@ -1547,7 +1815,27 @@ function PSFDesignLab() {
       </Card>
 
       {activeTab === 'assess' && (
-        <AssessTab onRun={runProbe} lastResult={lastResult} loading={loading} error={error} history={history} />
+        <AssessTab 
+          onRun={runProbe} 
+          lastResult={lastResult} 
+          loading={loading} 
+          error={error} 
+          history={history}
+          profile={profile}
+          setProfile={setProfile}
+          probePrompt={probePrompt}
+          setProbePrompt={setProbePrompt}
+          autoGenerate={autoGenerate}
+          setAutoGenerate={setAutoGenerate}
+          sampleCount={sampleCount}
+          setSampleCount={setSampleCount}
+          expectedOutput={expectedOutput}
+          setExpectedOutput={setExpectedOutput}
+          expectedVariation={expectedVariation}
+          setExpectedVariation={setExpectedVariation}
+          calculatedMetrics={calculatedMetrics}
+          setCalculatedMetrics={setCalculatedMetrics}
+        />
       )}
       {activeTab === 'design' && <DesignTab lastResult={lastResult} />}
       {activeTab === 'reflect' && <ReflectTab history={history} />}

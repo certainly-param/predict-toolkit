@@ -60,6 +60,12 @@ export interface ClassificationInput {
   responseSamples?: string[]; // optional multiple outputs from the underlying AI system
   profile?: SystemProfilePayload;
   userAnnotations?: UserAnnotations;
+  userExpectations?: {
+    expectedOutput?: string; // user's expected output (for interactive probe)
+    expectedVariation?: number; // [0,1] - user's expected variation (0=identical, 1=completely different)
+    expectedConfidence?: number; // [0,1] - user's expected confidence level
+  };
+  sampleCount?: number; // number of samples to generate for P_t approximation (default: 5)
   timestamp?: string;
 }
 

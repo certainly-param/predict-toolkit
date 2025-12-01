@@ -44,7 +44,7 @@ STEP 2: PROBING INTERACTIONS
 
 Example 1: Code Completion Tool
 - Probe prompt: 
-  Complete the folowing function for list sorting: def process_data(data: List[Dict]) -> Dict:
+  Complete the following function for list sorting: def process_data(data: List[Dict]) -> Dict:
 - Auto-generate: Checked (generates 5 responses automatically)
 
 Example 2: Code Completion Tool (Testing Uncertainty)
